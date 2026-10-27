@@ -1,0 +1,174 @@
+# ESP32 handset replacement for an MXKZH06 desk control box (MXSK05_A handset).
+#
+# Put this file and desk_panel.h in your ESPHome config folder (the same folder
+# as secrets.yaml). Copy secrets.yaml.example to secrets.yaml there and fill it in.
+#
+# Wiring (all 3.3 V, no extra parts):
+#   handset cable green (GND)  -> ESP32 GND
+#   handset cable white (CLK)  -> GPIO18
+#   handset cable black (DAT)  -> GPIO19
+#   handset cable red   (3.3V) -> leave unconnected (power the ESP32 from USB)
+
+esphome:
+  name: smart-desk
+  friendly_name: Smart Desk
+  includes:
+    - desk_panel.h
+  on_boot:
+    priority: 800
+    then:
+      - lambda: desk::setup();
+
+esp32:
+  board: nodemcu-32s  # any ESP32 (original/WROOM) dev board works
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Smart-Desk Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# Local page with the same controls, handy for testing without Home Assistant
+web_server:
+  port: 80
+
+interval:
+  - interval: 10ms
+    then:
+      - lambda: desk::update();
+
+# ---------- settings (Configuration section in Home Assistant) ----------
+
+number:
+  - platform: template
+    name: "Sit Height"
+    id: sit_height
+    icon: mdi:chair-rolling
+    unit_of_measurement: "in"
+    min_value: 22
+    max_value: 52
+    step: 0.5
+    initial_value: 27
+    optimistic: true
+    restore_value: true
+    mode: box
+    entity_category: config
+  - platform: template
+    name: "Stand Height"
+    id: stand_height
+    icon: mdi:human-handsup
+    unit_of_measurement: "in"
+    min_value: 22
+    max_value: 52
+    step: 0.5
+    initial_value: 42
+    optimistic: true
+    restore_value: true
+    mode: box
+    entity_category: config
+  # The desk keeps moving briefly after the key is let go. If it stops past the
+  # target, raise this; if it stops short, lower it.
+  - platform: template
+    name: "Stop Early By"
+    id: coast
+    icon: mdi:ray-end-arrow
+    unit_of_measurement: "in"
+    min_value: 0
+    max_value: 2
+    step: 0.1
+    initial_value: 0.3
+    optimistic: true
+    restore_value: true
+    mode: box
+    entity_category: config
+
+# ---------- Home Assistant entities ----------
+
+button:
+  - platform: template
+    name: "Sit"
+    icon: mdi:chair-rolling
+    on_press:
+      - lambda: desk::go_to(id(sit_height).state, id(coast).state);
+  - platform: template
+    name: "Stand"
+    icon: mdi:human-handsup
+    on_press:
+      - lambda: desk::go_to(id(stand_height).state, id(coast).state);
+  - platform: template
+    name: "Stop"
+    icon: mdi:stop
+    on_press:
+      - lambda: desk::stop();
+  - platform: template
+    name: "Nudge Up"
+    icon: mdi:arrow-up
+    on_press:
+      - lambda: desk::nudge(desk::KEY_UP, 1000);
+  - platform: template
+    name: "Nudge Down"
+    icon: mdi:arrow-down
+    on_press:
+      - lambda: desk::nudge(desk::KEY_DOWN, 1000);
+
+sensor:
+  - platform: template
+    name: "Height"
+    id: desk_height
+    unit_of_measurement: "in"
+    device_class: distance
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      float h = desk::known_height();
+      if (std::isnan(h)) return {};
+      return h;
+    filters:
+      - delta: 0.05
+  - platform: template
+    name: "Sitting Minutes"
+    id: sitting_minutes
+    unit_of_measurement: "min"
+    accuracy_decimals: 0
+    update_interval: 30s
+    lambda: |-
+      return desk::sitting_minutes((id(sit_height).state + id(stand_height).state) / 2);
+
+text_sensor:
+  - platform: template
+    name: "Position"  # sitting / standing, split halfway between the two heights
+    update_interval: 2s
+    lambda: |-
+      float mid = (id(sit_height).state + id(stand_height).state) / 2;
+      return std::string(desk::standing(mid) ? "standing" : "sitting");
+  # Raw display bytes, key and bus counters. Useful while wiring up; disable the
+  # entity in Home Assistant afterwards so it stays out of the logbook.
+  - platform: template
+    name: "Bus raw"
+    entity_category: diagnostic
+    update_interval: 2s
+    lambda: return desk::raw();
+
+binary_sensor:
+  - platform: template
+    name: "Control box connected"
+    id: bus_ok
+    device_class: connectivity
+    entity_category: diagnostic
+    lambda: return desk::connected();

@@ -1,0 +1,15 @@
+# Real credentials stay local
+secrets.yaml
+**/secrets.yaml
+
+# ESPHome build output
+.esphome/
+**/.esphome/
+*.bin
+*.elf
+
+# Logic analyzer captures can be large; keep them out unless you mean it
+*.sal
+
+.DS_Store
+Thumbs.db

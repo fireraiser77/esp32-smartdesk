@@ -1,0 +1,98 @@
+# Auto-stand for the ESP32 smart desk, as a Home Assistant package.
+#
+# Option A (this file): save as config/packages/desk_autostand.yaml and add to
+# configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+# Option B (no file editing): create the same helpers, template sensor and
+# automation in the UI. See README.md in this folder.
+#
+# Before using, replace these with your own entity IDs:
+#   binary_sensor.mmwave_sensor_occupancy  your presence sensor (on = someone at the desk)
+#   sensor.smart_desk_position              the desk's Position entity
+#   button.smart_desk_stand / _sit          the desk's Stand and Sit buttons
+#
+# The sitting clock only runs while you're at the desk AND it's at sitting
+# height. Standing up (by hand or automatically) or leaving resets it.
+
+input_boolean:
+  desk_auto_stand:
+    name: "Desk auto stand"
+    icon: mdi:human-handsup
+
+input_number:
+  desk_sit_limit:
+    name: "Stand after sitting"
+    icon: mdi:chair-rolling
+    min: 5
+    max: 120
+    step: 5
+    initial: 45
+    unit_of_measurement: min
+  desk_stand_duration:
+    name: "Stand for"
+    icon: mdi:human-handsup
+    min: 5
+    max: 60
+    step: 5
+    initial: 15
+    unit_of_measurement: min
+
+template:
+  - binary_sensor:
+      - name: "Sitting at desk"  # -> binary_sensor.sitting_at_desk
+        state: >
+          {{ is_state('binary_sensor.mmwave_sensor_occupancy', 'on')
+             and is_state('sensor.smart_desk_position', 'sitting') }}
+        # brief presence dropouts shouldn't reset the clock
+        delay_off: { minutes: 2 }
+
+automation:
+  - id: desk_auto_stand
+    alias: "Desk: stand after sitting too long"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.sitting_at_desk
+        to: "on"
+        for:
+          minutes: "{{ states('input_number.desk_sit_limit') | int(45) }}"
+      # A restart (Home Assistant or the desk) loses the timer above, so also
+      # check once a minute how long "Sitting at desk" has been on.
+      - trigger: time_pattern
+        minutes: "/1"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.desk_auto_stand
+        state: "on"
+      - condition: template
+        value_template: >
+          {{ is_state('binary_sensor.sitting_at_desk', 'on')
+             and (now() - states.binary_sensor.sitting_at_desk.last_changed).total_seconds()
+                 >= (states('input_number.desk_sit_limit') | int(45)) * 60 }}
+    actions:
+      - action: button.press
+        target: { entity_id: button.smart_desk_stand }
+      # Give the desk a minute to get there; give up if it never does
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: sensor.smart_desk_position
+            to: "standing"
+        timeout: { minutes: 1 }
+        continue_on_timeout: false
+      - delay:
+          minutes: "{{ states('input_number.desk_stand_duration') | int(15) }}"
+      # Only lower it if you're still there and haven't moved it yourself.
+      # Never lowers an empty desk.
+      - condition: state
+        entity_id: sensor.smart_desk_position
+        state: "standing"
+      - condition: state
+        entity_id: binary_sensor.mmwave_sensor_occupancy
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.desk_auto_stand
+        state: "on"
+      - action: button.press
+        target: { entity_id: button.smart_desk_sit }
