@@ -191,7 +191,13 @@ static int seg_to_digit(uint8_t s) {
   }
 }
 
-// The number on the (virtual) display, e.g. 27.0. NAN while blank or showing text.
+// Anything outside this isn't a height. Waking from sleep, the box briefly shows
+// "07.0", which would otherwise look like the desk is already below the sit height.
+static constexpr float MIN_HEIGHT = 18.0f;
+static constexpr float MAX_HEIGHT = 60.0f;
+
+// The number on the (virtual) display, e.g. 27.0. NAN while blank, showing text,
+// or showing a number that can't be a height.
 static float height() {
   float value = 0;
   int decimals = -1;
@@ -208,6 +214,7 @@ static float height() {
   }
   if (!any) return NAN;
   for (int i = 0; i < decimals; i++) value /= 10;
+  if (value < MIN_HEIGHT || value > MAX_HEIGHT) return NAN;
   return value;
 }
 
@@ -234,12 +241,13 @@ static int64_t now_us() { return esp_timer_get_time(); }
 // the box's presets.
 static constexpr int64_t GOTO_MAX_US = 40 * 1000000LL;     // give up after this long
 static constexpr int64_t GOTO_STALL_US = 3 * 1000000LL;    // or if the height stops changing
-// A sleeping box only wakes on the first press, so if the desk hasn't started moving
-// soon after a press, let go and press again
-static constexpr int64_t GOTO_START_US = 2000 * 1000LL;
-static constexpr int64_t GOTO_REPRESS_GAP_US = 400 * 1000LL;
+// A sleeping box only wakes on the first press, and after a long idle it can take
+// several seconds before it will move, so if the desk hasn't started moving after a
+// press, let go for a moment and press again
+static constexpr int64_t GOTO_START_US = 4000 * 1000LL;
+static constexpr int64_t GOTO_REPRESS_GAP_US = 1000 * 1000LL;
 static constexpr int GOTO_MAX_PRESSES = 4;
-static constexpr int64_t GOTO_WAKE_US = 1000 * 1000LL;     // short Up press to read the height
+static constexpr int64_t GOTO_WAKE_US = 2000 * 1000LL;     // short Up press to read the height
 static constexpr int64_t REPRESS_US = 10 * 1000000LL;      // re-press before the hold cap
 static constexpr int64_t REPRESS_GAP_US = 150 * 1000LL;
 static constexpr float GOTO_CLOSE_ENOUGH = 0.2f;           // inches; already there
@@ -285,6 +293,7 @@ static void go_to(float target, float coast) {
     return;
   }
   goto_up = target > h;
+  ESP_LOGI("desk", "go_to %.1f from %.1f, display %s", target, h, std::isnan(height()) ? "off" : "on");
 }
 
 // Runs every update while going to a height; returns the key to hold
@@ -299,21 +308,28 @@ static uint8_t goto_key(int64_t t) {
   }
   bool arrived = goto_up ? h >= goto_target - goto_coast : h <= goto_target + goto_coast;
   if (std::fabs(h - goto_last_h) >= 0.1f) {
+    if (!goto_moved)
+      ESP_LOGI("desk", "go_to %.1f: moving after %.1fs, press %d", goto_target,
+               (t - goto_started) / 1e6, goto_presses);
     goto_last_h = h;
     goto_last_change = t;
     goto_moved = true;
   }
   bool stalled = goto_moved && t - goto_last_change > GOTO_STALL_US;  // at a limit, or blocked
   if (arrived || stalled || t - goto_started > GOTO_MAX_US) {
+    ESP_LOGI("desk", "go_to %.1f done at %.1f after %.1fs (%s)", goto_target, h,
+             (t - goto_started) / 1e6, arrived ? "arrived" : stalled ? "stalled" : "timeout");
     goto_active = false;
     return KEY_IDLE;
   }
   if (t < goto_press_at) return KEY_IDLE;  // let go between presses
   if (!goto_moved && t - goto_press_at > GOTO_START_US) {
     if (goto_presses >= GOTO_MAX_PRESSES) {
+      ESP_LOGW("desk", "go_to %.1f gave up: no movement after %d presses", goto_target, goto_presses);
       goto_active = false;
       return KEY_IDLE;
     }
+    ESP_LOGI("desk", "go_to %.1f: no movement after press %d, pressing again", goto_target, goto_presses);
     goto_presses++;
     goto_press_at = t + GOTO_REPRESS_GAP_US;
     return KEY_IDLE;

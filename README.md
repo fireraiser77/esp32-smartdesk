@@ -113,8 +113,11 @@ The box has its own presets, but saving them over this bus was unreliable, so th
 firmware ignores them. To go to a height it holds Up or Down while watching the
 height on the display bus, and releases early by Stop Early By. It also:
 
-- presses again if the desk hasn't started moving within 2 s (a sleeping box
-  wakes on the first press and ignores it), up to 4 presses;
+- presses again if the desk hasn't started moving within 4 s, up to 4 presses.
+  From sleep the box usually starts within about 1.5 s of a held key; don't make
+  this shorter, because re-pressing a desk that has just started stops it;
+- ignores display readings outside 18–60 in (the box shows `07.0` when you press
+  Down at its lowest point);
 - re-presses every 10 s on long moves, since the box stops after ~15 s of one hold;
 - gives up after 3 s without movement once it has moved (end of travel or an
   obstruction), or 40 s total.

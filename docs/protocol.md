@@ -66,10 +66,13 @@ digit 4 mirrors digit 3. A byte of `00` means the digit is blank.
 
 ## Behaviour worth knowing
 
-- **Sleep.** After a while idle the box blanks the display (all `00`). The first
-  key press only wakes it, and the desk doesn't move. The firmware remembers the
-  last height it saw, and if a move hasn't started within 2 s it lets go and
-  presses again (up to 4 times).
+- **Sleep.** About 10 s after the desk stops, the box blanks the display (all
+  `00`). Holding a key wakes it; the display shows the height within about half a
+  second and the desk usually starts moving within about 1.5 s. A quick tap may
+  only wake it. The firmware remembers the last height it saw, and if a move
+  hasn't started within 4 s it lets go and presses again (up to 4 times).
+- **Bottom limit.** Pressing Down at the lowest height shows `07.0` instead of
+  the height. The firmware ignores readings outside 18–60 in.
 - **Any press stops a moving desk.** Including the box's own preset moves.
   That's why the firmware stops by simply releasing the key.
 - **Coast.** The desk keeps moving a little after the key is released. The
